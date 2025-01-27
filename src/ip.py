@@ -14,6 +14,7 @@ templates = Jinja2Templates(directory="templates")
 
 URL = "http://ip-api.com/json/"
 PARAMS = "country,regionName,city,isp,proxy"
+CLI = ["curl", "Wget", "wget"]
 
 
 # Return geolocation IP info
@@ -30,10 +31,17 @@ def lookup_ip(req: Request) -> str:
     return ip
 
 
+# Check if cli tools are used
 def is_cmd(result: Dict[str, str]) -> bool:
-    user_agent: str = result.get("user_agent")
-    if "curl" or "wget" in user_agent:
-        return True
+    try:
+        user_agent: str = result.get("user_agent")
+        for options in CLI:
+            if options in user_agent:
+                print(options)
+                return True
+    except TypeError:
+        print("User-Agent attribute is emptied")
+
     return False
 
 
