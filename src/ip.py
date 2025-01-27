@@ -37,10 +37,9 @@ def is_cmd(result: Dict[str, str]) -> bool:
         user_agent: str = result.get("user_agent")
         for options in CLI:
             if options in user_agent:
-                print(options)
                 return True
     except TypeError:
-        print("User-Agent attribute is emptied")
+        pass
 
     return False
 
