@@ -74,18 +74,14 @@ def return_html_page(req: Request):
         return PlainTextResponse(content=result.get("ip"))
 
     return templates.TemplateResponse(
-        request=req, name="index.html",
-        context=result,
-        status_code=status.HTTP_200_OK
+        request=req, name="index.html", context=result, status_code=status.HTTP_200_OK
     )
 
 
 @app.exception_handler(404)
 def not_found(req: Request):
     return templates.TemplateResponse(
-        request=req,
-        name="404.html",
-        status_code=status.HTTP_404_NOT_FOUND
+        request=req, name="404.html", status_code=status.HTTP_404_NOT_FOUND
     )
 
 
@@ -103,4 +99,4 @@ def not_found(req: Request):
 
 
 if __name__ == "__main__":
-    uvicorn.run("ip:app", reload="True", port=8000, log_level="info")
+    uvicorn.run("ip:app", reload="False", port=8500, log_level="info")
