@@ -99,4 +99,4 @@ def not_found(req: Request):
 
 
 if __name__ == "__main__":
-    uvicorn.run("ip:app", reload="False", port=8500, log_level="info")
+    uvicorn.run("ip:app", host= "0.0.0.0", reload="False", port=8500, log_level="info")
