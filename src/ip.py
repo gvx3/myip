@@ -1,8 +1,8 @@
-from typing import Dict
+from typing import Dict, Optional
 
 import requests
 import uvicorn
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -19,13 +19,17 @@ CLI = ["curl", "Wget", "wget"]
 
 # Return geolocation IP info
 def lookup_geo_info(ip: str) -> Dict:
-    url = URL + ip + "?fields=" + PARAMS
-    record: Dict = requests.get(url).json()
-    return record
+    try:
+        url = URL + ip + "?fields=" + PARAMS
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch geolocation data: {str(e)}")
 
 
 def lookup_ip(req: Request) -> str:
-    visit_ip: str = req.headers.get("x-forward-for")
+    visit_ip: Optional[str] = req.headers.get("x-forwarded-for")
     # Get first IP only
     ip = visit_ip.split(",")[0] if visit_ip is not None else req.client.host
     return ip
@@ -34,37 +38,26 @@ def lookup_ip(req: Request) -> str:
 # Check if cli tools are used
 def is_cmd(result: Dict[str, str]) -> bool:
     try:
-        user_agent: str = result.get("user_agent")
-        for options in CLI:
-            if options in user_agent:
-                return True
-    except TypeError:
-        pass
-
-    return False
+        user_agent: str = result.get("user_agent", "")
+        return any(cli in user_agent for cli in CLI)
+    except (TypeError, AttributeError):
+        return False
 
 
 def index(req: Request) -> Dict[str, str]:
-    user_agent: str = req.headers.get("user-agent")
+    user_agent: str = req.headers.get("user-agent", "")
     ip = lookup_ip(req)
     record = lookup_geo_info(ip)
-    country = record.get("country")
-    region_name = record.get("regionName")
-    isp = record.get("isp")
-    city = record.get("city")
-    proxy = record.get("proxy")
-    proxy = "Yes" if record.get("proxy") is True else "No"
-
-    content: Dict[str, str] = {
+    
+    return {
         "ip": ip,
-        "city": city,
-        "region_name": region_name,
-        "country": country,
-        "isp": isp,
+        "city": record.get("city", ""),
+        "region_name": record.get("regionName", ""),
+        "country": record.get("country", ""),
+        "isp": record.get("isp", ""),
         "user_agent": user_agent,
-        "proxy": proxy,
+        "proxy": "Yes" if record.get("proxy") is True else "No",
     }
-    return content
 
 
 @app.get("/")
@@ -78,6 +71,11 @@ def return_html_page(req: Request):
     )
 
 
+@app.get("/json")
+def json_page(req: Request) -> Dict[str, str]:
+    return index(req)
+
+
 @app.exception_handler(404)
 def not_found(req: Request):
     return templates.TemplateResponse(
@@ -85,18 +83,5 @@ def not_found(req: Request):
     )
 
 
-# @app.get("/json")
-# def json_page(req: Request):
-#     ip = dict(req.headers).get("x-forwarded-for")
-#     user_agent = dict(req.headers).get("user-agent")
-
-#     all = dict(req.headers)
-#     return {
-#         "user-agent": user_agent,
-#         "ip": ip,
-#         "all": all,
-#     }
-
-
 if __name__ == "__main__":
-    uvicorn.run("ip:app", host= "0.0.0.0", reload="False", port=8500, log_level="info")
+    uvicorn.run("ip:app", host="0.0.0.0", reload=False, port=8500, log_level="info")
