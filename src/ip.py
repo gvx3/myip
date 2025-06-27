@@ -4,7 +4,7 @@ from typing import Dict, Optional
 
 import requests
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, Request, status
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -29,7 +29,6 @@ def lookup_geo_info(ip: str) -> Dict:
         response.raise_for_status()
         data = response.json()
         
-        # Check if API returned an error
         if data.get('status') == 'fail':
             logger.warning(f"Geolocation API failed for {ip}: {data.get('message', 'Unknown error')}")
             return {}
@@ -38,19 +37,6 @@ def lookup_geo_info(ip: str) -> Dict:
         logger.error(f"Failed to fetch geolocation data for {ip}: {str(e)}")
         return {}
 
-# def get_ipv4_from_header(ip: str) -> Optional[str]:
-#     try:
-#         ip_obj = ipaddress.ip_address(ip)
-#         if ip_obj.version == 4:
-#             logger.info(f"IPv4 address found: {ip}")
-#             return ip
-
-#         if ip_obj.version == 6 and ip_obj.ipv4_mapped:
-#             logger.info(f"IPv4-mapped IPv6 address found: {ip} -> {ip_obj.ipv4_mapped}")
-#             return str(ip_obj.ipv4_mapped)
-#     except ValueError:
-#         logger.warning(f"Invalid IP address encountered: {ip}")
-#     return None
 
 def get_valid_ip_from_header(ip: str) -> Optional[str]:
     """
