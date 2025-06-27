@@ -27,47 +27,98 @@ def lookup_geo_info(ip: str) -> Dict:
         url = URL + ip + "?fields=" + PARAMS
         response = requests.get(url, timeout=5)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        
+        # Check if API returned an error
+        if data.get('status') == 'fail':
+            logger.warning(f"Geolocation API failed for {ip}: {data.get('message', 'Unknown error')}")
+            return {}
+
     except requests.RequestException as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch geolocation data: {str(e)}")
+        logger.error(f"Failed to fetch geolocation data for {ip}: {str(e)}")
+        return {}
 
-def get_ipv4_from_header(ip: str) -> Optional[str]:
+# def get_ipv4_from_header(ip: str) -> Optional[str]:
+#     try:
+#         ip_obj = ipaddress.ip_address(ip)
+#         if ip_obj.version == 4:
+#             logger.info(f"IPv4 address found: {ip}")
+#             return ip
+
+#         if ip_obj.version == 6 and ip_obj.ipv4_mapped:
+#             logger.info(f"IPv4-mapped IPv6 address found: {ip} -> {ip_obj.ipv4_mapped}")
+#             return str(ip_obj.ipv4_mapped)
+#     except ValueError:
+#         logger.warning(f"Invalid IP address encountered: {ip}")
+#     return None
+
+def get_valid_ip_from_header(ip: str) -> Optional[str]:
+    """
+    Extract valid IP address from header value, supporting both IPv4 and IPv6
+    """
     try:
+        ip = ip.strip()
         ip_obj = ipaddress.ip_address(ip)
+        
+        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
+            logger.debug(f"Skipping private/local IP: {ip}")
+            return None
+        
+        # Accept both IPv4 and public IPv6 addresses
         if ip_obj.version == 4:
-            logger.info(f"IPv4 address found: {ip}")
+            logger.info(f"Valid IPv4 address found: {ip}")
             return ip
-
-        if ip_obj.version == 6 and ip_obj.ipv4_mapped:
-            logger.info(f"IPv4-mapped IPv6 address found: {ip} -> {ip_obj.ipv4_mapped}")
-            return str(ip_obj.ipv4_mapped)
+        elif ip_obj.version == 6:
+            # Handle IPv4-mapped IPv6 addresses
+            if ip_obj.ipv4_mapped:
+                mapped_ipv4 = str(ip_obj.ipv4_mapped)
+                logger.info(f"IPv4-mapped IPv6 address found: {ip} -> {mapped_ipv4}")
+                return mapped_ipv4
+            else:
+                # Accept native IPv6 addresses
+                logger.info(f"Valid IPv6 address found: {ip}")
+                return ip
+                
     except ValueError:
         logger.warning(f"Invalid IP address encountered: {ip}")
+    
     return None
-
 
 
 def lookup_ip(req: Request) -> str:
     cf_ip: Optional[str] = req.headers.get("cf-connecting-ip")
     if cf_ip:
         logger.info(f"CF-Connecting-IP header found: {cf_ip}")
-        ipv4 = get_ipv4_from_header(cf_ip)
-        if ipv4:
-            return ipv4
+        valid_ip = get_valid_ip_from_header(cf_ip)
+        if valid_ip:
+            return valid_ip
 
     visit_ip: Optional[str] = req.headers.get("x-forwarded-for")
-    # Get first IP only
-    # ip = visit_ip.split(",")[0] if visit_ip is not None else req.client.host
     if visit_ip:
         logger.info(f"X-Forwarded-For header found: {visit_ip}")
         for ip in visit_ip.split(","):
             ip = ip.strip()
-            ipv4 = get_ipv4_from_header(ip)
-            if ipv4:
-                return ipv4
+            valid_ip = get_valid_ip_from_header(ip)
+            if valid_ip:
+                return valid_ip
     
-    logger.info(f"Falling back to client host: {req.client.host}")
-    return req.client.host
+    #Check other header names
+    for header in ["x-real-ip", "x-client-ip"]:
+        header_ip = req.headers.get(header)
+        if header_ip:
+            logger.info(f"{header} header found: {header_ip}")
+            valid_ip = get_valid_ip_from_header(header_ip)
+            if valid_ip:
+                return valid_ip
+            
+    client_host = req.client.host if req.client else "127.0.0.1"
+    logger.info(f"Falling back to client host: {client_host}")
+
+    valid_ip = get_valid_ip_from_header(client_host)
+    if valid_ip:
+        return valid_ip
+    
+    return client_host
 
 
 # Check if cli tools are used
@@ -86,10 +137,10 @@ def index(req: Request) -> Dict[str, str]:
     logger.info(f"Geo-IP lookup for {ip}: {record}")
     return {
         "ip": ip,
-        "city": record.get("city", ""),
-        "region_name": record.get("regionName", ""),
-        "country": record.get("country", ""),
-        "isp": record.get("isp", ""),
+        "city": record.get("city", "Unknown"),
+        "region_name": record.get("regionName", "Unknown"),
+        "country": record.get("country", "Unknown"),
+        "isp": record.get("isp", "Unknown"),
         "user_agent": user_agent,
         "proxy": "Yes" if record.get("proxy") is True else "No",
     }
