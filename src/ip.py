@@ -32,9 +32,14 @@ def lookup_geo_info(ip: str) -> Dict:
         if data.get('status') == 'fail':
             logger.warning(f"Geolocation API failed for {ip}: {data.get('message', 'Unknown error')}")
             return {}
-
+        
+        return data
+    
     except requests.RequestException as e:
         logger.error(f"Failed to fetch geolocation data for {ip}: {str(e)}")
+        return {}
+    except Exception as e:
+        logger.error(f"Unexpected error during geolocation lookup for {ip}: {str(e)}")
         return {}
 
 
@@ -121,6 +126,9 @@ def index(req: Request) -> Dict[str, str]:
     ip = lookup_ip(req)
     record = lookup_geo_info(ip)
     logger.info(f"Geo-IP lookup for {ip}: {record}")
+
+    if record is None:
+        record = {}
     return {
         "ip": ip,
         "city": record.get("city", "Unknown"),
