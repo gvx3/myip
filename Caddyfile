@@ -1,0 +1,5 @@
+https://seemyaddr.org {
+        reverse_proxy localhost:8500 {
+                header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+        }
+}
