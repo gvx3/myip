@@ -4,9 +4,6 @@ MyIP is a simple web application for checking your public IP and relevant inform
 
 Link: <https://seemyaddr.org>
 
-Temporary demo link (wait to start up if inactive):
-<https://myip-9mb4.onrender.com>
-
 This project's structure is set up by using `uv` package manager <https://github.com/astral-sh/uv> but `pip` can also be used normally.
 
 ## Run application with Docker
