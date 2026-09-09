@@ -1,6 +1,5 @@
 import ipaddress
 import logging
-from typing import Dict, Optional
 
 import requests
 import uvicorn
@@ -21,40 +20,66 @@ CLI = ["curl", "Wget", "wget"]
 logger = logging.getLogger("myip")
 logging.basicConfig(level=logging.INFO)
 
+
+def is_public_ip(ip: str) -> bool:
+    """
+    Return True if the given string is a valid public IP address.
+
+    Private, loopback, link-local, reserved, multicast and unspecified
+    addresses are not routable on the public internet.
+    """
+    try:
+        ip_obj = ipaddress.ip_address(ip.strip())
+    except ValueError:
+        return False
+    return not (
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_reserved
+        or ip_obj.is_multicast
+        or ip_obj.is_unspecified
+    )
+
+
 # Return geolocation IP info
-def lookup_geo_info(ip: str) -> Dict:
+def lookup_geo_info(ip: str) -> dict:
+    if not is_public_ip(ip):
+        logger.debug(f"Skipping geolocation lookup for non-public IP: {ip}")
+        return {}
+
     try:
         url = URL + ip + "?fields=" + PARAMS
         response = requests.get(url, timeout=5)
         response.raise_for_status()
         data = response.json()
-        
+
         if data.get('status') == 'fail':
             logger.warning(f"Geolocation API failed for {ip}: {data.get('message', 'Unknown error')}")
             return {}
-        
+
         return data
-    
+
     except requests.RequestException as e:
-        logger.error(f"Failed to fetch geolocation data for {ip}: {str(e)}")
+        logger.error(f"Failed to fetch geolocation data for {ip}: {e!s}")
         return {}
-    except Exception as e:
-        logger.error(f"Unexpected error during geolocation lookup for {ip}: {str(e)}")
+    except Exception as e:  #keep the page resilient to unexpected upstream errors
+        logger.error(f"Unexpected error during geolocation lookup for {ip}: {e!s}")
         return {}
 
 
-def get_valid_ip_from_header(ip: str) -> Optional[str]:
+def get_valid_ip_from_header(ip: str) -> str | None:
     """
     Extract valid IP address from header value, supporting both IPv4 and IPv6
     """
     try:
         ip = ip.strip()
         ip_obj = ipaddress.ip_address(ip)
-        
+
         if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
             logger.debug(f"Skipping private/local IP: {ip}")
             return None
-        
+
         # Accept both IPv4 and public IPv6 addresses
         if ip_obj.version == 4:
             logger.info(f"Valid IPv4 address found: {ip}")
@@ -69,22 +94,22 @@ def get_valid_ip_from_header(ip: str) -> Optional[str]:
                 # Accept native IPv6 addresses
                 logger.info(f"Valid IPv6 address found: {ip}")
                 return ip
-                
+
     except ValueError:
         logger.warning(f"Invalid IP address encountered: {ip}")
-    
+
     return None
 
 
 def lookup_ip(req: Request) -> str:
-    cf_ip: Optional[str] = req.headers.get("cf-connecting-ip")
+    cf_ip: str | None = req.headers.get("cf-connecting-ip")
     if cf_ip:
         logger.info(f"CF-Connecting-IP header found: {cf_ip}")
         valid_ip = get_valid_ip_from_header(cf_ip)
         if valid_ip:
             return valid_ip
 
-    visit_ip: Optional[str] = req.headers.get("x-forwarded-for")
+    visit_ip: str | None = req.headers.get("x-forwarded-for")
     if visit_ip:
         logger.info(f"X-Forwarded-For header found: {visit_ip}")
         for ip in visit_ip.split(","):
@@ -92,7 +117,7 @@ def lookup_ip(req: Request) -> str:
             valid_ip = get_valid_ip_from_header(ip)
             if valid_ip:
                 return valid_ip
-    
+
     #Check other header names
     for header in ["x-real-ip", "x-client-ip"]:
         header_ip = req.headers.get(header)
@@ -101,19 +126,22 @@ def lookup_ip(req: Request) -> str:
             valid_ip = get_valid_ip_from_header(header_ip)
             if valid_ip:
                 return valid_ip
-            
+
+    # No trusted proxy header was found, so report the TCP peer address as-is.
+    # It may be private/loopback (e.g. local development); when the peer is
+    # public, get_valid_ip_from_header still normalizes IPv4-mapped IPv6.
     client_host = req.client.host if req.client else "127.0.0.1"
     logger.info(f"Falling back to client host: {client_host}")
 
     valid_ip = get_valid_ip_from_header(client_host)
     if valid_ip:
         return valid_ip
-    
+
     return client_host
 
 
 # Check if cli tools are used
-def is_cmd(result: Dict[str, str]) -> bool:
+def is_cmd(result: dict[str, str]) -> bool:
     try:
         user_agent: str = result.get("user_agent", "")
         return any(cli in user_agent for cli in CLI)
@@ -121,14 +149,11 @@ def is_cmd(result: Dict[str, str]) -> bool:
         return False
 
 
-def index(req: Request) -> Dict[str, str]:
+def index(req: Request) -> dict[str, str]:
     user_agent: str = req.headers.get("user-agent", "")
     ip = lookup_ip(req)
     record = lookup_geo_info(ip)
     logger.info(f"Geo-IP lookup for {ip}: {record}")
-
-    if record is None:
-        record = {}
     return {
         "ip": ip,
         "city": record.get("city", "Unknown"),
@@ -153,12 +178,12 @@ def return_html_page(req: Request):
 
 
 @app.get("/json")
-def json_page(req: Request) -> Dict[str, str]:
+def json_page(req: Request) -> dict[str, str]:
     return index(req)
 
 
 @app.exception_handler(404)
-def not_found(req: Request):
+def not_found(req: Request, exc):
     return templates.TemplateResponse(
         request=req, name="404.html", status_code=status.HTTP_404_NOT_FOUND
     )
