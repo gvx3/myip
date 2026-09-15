@@ -1,15 +1,28 @@
 [project]
 name = "myip"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "Web app that reports a visitor's public IP address and geolocation."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi==0.141.1",
-    "httpx>=0.28.1",
-    "ipaddress==1.0.23",
     "jinja2==3.1.6",
-    "pytest>=8.3.5",
     "requests>=2.34.2",
     "uvicorn==0.52.4",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=8.3.5",
+    "ruff>=0.16.7",
+]
+
+# Explicit rule set so lint results do not drift when ruff's defaults change
+# (ruff 0.16 expanded its defaults to enable BLE001 and others).
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "UP", "B", "BLE"]
