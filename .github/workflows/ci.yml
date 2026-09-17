@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          # Keep in sync with the uv version pinned in the Dockerfile.
+          version: "0.12.11"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t myip:ci .
+
+  # Deploys the merge commit to the GCP VM through an IAP tunnel, then runs
+  # deploy.sh there (git pull -> docker build -> restart -> wait for healthy).
+  # Only runs on main; PRs stop after the checks above. The VM needs no public
+  # IP and no open SSH port: IAP forwards the connection from 35.235.240.0/20.
+  #
+  # Repository secrets required:
+  #   GCP_WIF_PROVIDER     projects/NUM/locations/global/workloadIdentityPools/POOL/providers/PROVIDER
+  #   GCP_SERVICE_ACCOUNT  email of the deploy service account
+  #   GCP_ZONE             VM zone
+  #   VM_INSTANCE          VM instance name
+  #   DEPLOY_PATH          absolute path of the repo clone on the VM
+  deploy:
+    needs: [test, docker]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # required for Workload Identity Federation
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Deploy over IAP
+        env:
+          GCP_ZONE: ${{ secrets.GCP_ZONE }}
+          VM_INSTANCE: ${{ secrets.VM_INSTANCE }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          gcloud compute ssh "$VM_INSTANCE" \
+            --zone "$GCP_ZONE" \
+            --tunnel-through-iap \
+            --quiet \
+            --command "cd '$DEPLOY_PATH' && git pull --ff-only && ./deploy.sh"
