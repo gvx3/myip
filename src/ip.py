@@ -10,7 +10,6 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-
 PORT = int(os.getenv("MYIP_PORT", "8500"))
 LOG_LEVEL = os.getenv("MYIP_LOG_LEVEL", "INFO").upper()
 # When false, forwarding headers (X-Forwarded-For, ...) are ignored and the TCP
@@ -22,6 +21,8 @@ LOOKUP_RATE_LIMIT = int(os.getenv("MYIP_LOOKUP_RATE_LIMIT", "30"))
 GEO_TIMEOUT = 5  # seconds
 GEO_CACHE_TTL = 300  # seconds a geolocation result is reused
 GEO_CACHE_MAX = 1000  # entries before the cache is flushed
+GEO_FAIL_TTL = 60  # seconds a definitive "cannot geolocate" answer is reused
+GEO_COOLDOWN_FALLBACK = 60  # cooldown when the API rate-limits us without an X-Ttl header
 
 app = FastAPI()
 
@@ -38,8 +39,10 @@ CLI = ["curl", "wget"]
 logger = logging.getLogger("myip")
 logging.basicConfig(level=LOG_LEVEL)
 
-# ip -> (expiry monotonic timestamp, geo record)
-_geo_cache: dict[str, tuple[float, dict]] = {}
+# ip -> (expiry monotonic timestamp, geo record or None for a negative cache entry)
+_geo_cache: dict[str, tuple[float, dict | None]] = {}
+# monotonic timestamp until which upstream lookups are skipped after a 429
+_geo_cooldown_until = 0.0
 # client ip -> (current minute window, request count in that window)
 _rate_windows: dict[str, tuple[int, int]] = {}
 
@@ -80,31 +83,51 @@ def is_rate_limited(key: str) -> bool:
     return count > LOOKUP_RATE_LIMIT
 
 
+def _remember(ip: str, data: dict | None, ttl: float) -> None:
+    if len(_geo_cache) >= GEO_CACHE_MAX:  # ponytail: crude flush, fine for one process
+        _geo_cache.clear()
+    _geo_cache[ip] = (time.monotonic() + ttl, data)
+
+
 # Return geolocation IP info
 def lookup_geo_info(ip: str) -> dict:
+    global _geo_cooldown_until
+
     if not is_public_ip(ip):
         logger.debug(f"Skipping geolocation lookup for non-public IP: {ip}")
         return {}
 
     now = time.monotonic()
+    if now < _geo_cooldown_until:
+        logger.debug(f"Geolocation API cooling down, skipping lookup for {ip}")
+        return {}
+
     cached = _geo_cache.get(ip)
     if cached and cached[0] > now:
         logger.debug(f"Geolocation cache hit for {ip}")
-        return cached[1]
+        return cached[1] or {}
 
     try:
         url = URL + ip + "?fields=" + PARAMS
         response = requests.get(url, timeout=GEO_TIMEOUT)
+
+        # ip-api signals quota exhaustion with 429 + X-Ttl (seconds until reset).
+        # Back off for that long instead of retrying every uncached IP meanwhile.
+        if response.status_code == 429:
+            ttl = float(response.headers.get("X-Ttl", GEO_COOLDOWN_FALLBACK))
+            _geo_cooldown_until = now + ttl
+            logger.warning(f"Geolocation API rate limited; pausing lookups for {ttl:.0f}s")
+            return {}
+
         response.raise_for_status()
         data = response.json()
 
         if data.get("status") == "fail":
             logger.warning(f"Geolocation API failed for {ip}: {data.get('message', 'Unknown error')}")
+            _remember(ip, None, GEO_FAIL_TTL)
             return {}
 
-        if len(_geo_cache) >= GEO_CACHE_MAX:  # ponytail: crude flush, fine for one process
-            _geo_cache.clear()
-        _geo_cache[ip] = (now + GEO_CACHE_TTL, data)
+        _remember(ip, data, GEO_CACHE_TTL)
         return data
 
     except requests.RequestException as e:
@@ -120,31 +143,21 @@ def get_valid_ip_from_header(ip: str) -> str | None:
     Extract valid IP address from header value, supporting both IPv4 and IPv6
     """
     try:
-        ip = ip.strip()
-        ip_obj = ipaddress.ip_address(ip)
-
-        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local:
-            logger.debug(f"Skipping private/local IP: {ip}")
-            return None
-
-        # Accept both IPv4 and public IPv6 addresses
-        if ip_obj.version == 4:
-            logger.info(f"Valid IPv4 address found: {ip}")
-            return ip
-        elif ip_obj.version == 6:
-            # Handle IPv4-mapped IPv6 addresses
-            if ip_obj.ipv4_mapped:
-                mapped_ipv4 = str(ip_obj.ipv4_mapped)
-                logger.info(f"IPv4-mapped IPv6 address found: {ip} -> {mapped_ipv4}")
-                return mapped_ipv4
-            else:
-                # Accept native IPv6 addresses
-                logger.info(f"Valid IPv6 address found: {ip}")
-                return ip
-
+        ip_obj = ipaddress.ip_address(ip.strip())
     except ValueError:
         logger.warning(f"Invalid IP address encountered: {ip}")
+        return None
 
+    # Normalize IPv4-mapped IPv6 (::ffff:1.2.3.4) to its IPv4 form.
+    if ip_obj.version == 6 and ip_obj.ipv4_mapped:
+        ip_obj = ip_obj.ipv4_mapped
+        logger.info(f"IPv4-mapped IPv6 address found, using {ip_obj}")
+
+    if is_public_ip(str(ip_obj)):
+        logger.info(f"Valid IPv{ip_obj.version} address found: {ip_obj}")
+        return str(ip_obj)
+
+    logger.debug(f"Skipping non-public IP: {ip}")
     return None
 
 

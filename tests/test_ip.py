@@ -40,6 +40,7 @@ def clear_caches():
     """Keep the module-level geo cache and rate-limit windows isolated per test."""
     ip_module._geo_cache.clear()
     ip_module._rate_windows.clear()
+    ip_module._geo_cooldown_until = 0.0
     yield
 
 
@@ -110,6 +111,32 @@ def test_lookup_geo_info_cache_expires(monkeypatch):
     assert mock_get.call_count == 2
 
 
+def test_lookup_geo_info_negative_cache_avoids_repeat_calls():
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.json.return_value = {
+            "status": "fail",
+            "message": "reserved range",
+        }
+        mock_get.return_value.raise_for_status.return_value = None
+
+        assert lookup_geo_info("8.8.8.8") == {}
+        assert lookup_geo_info("8.8.8.8") == {}
+
+    assert mock_get.call_count == 1
+
+
+def test_lookup_geo_info_backs_off_after_rate_limit():
+    with patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 429
+        mock_get.return_value.headers = {"X-Ttl": "60"}
+
+        assert lookup_geo_info("8.8.8.8") == {}
+        assert lookup_geo_info("1.1.1.1") == {}
+
+    assert mock_get.call_count == 1
+    assert ip_module._geo_cooldown_until > 0
+
+
 # --- is_public_ip ---
 
 @pytest.mark.parametrize(
@@ -140,6 +167,8 @@ def test_is_public_ip(ip, expected):
         ("127.0.0.1", None),
         ("10.0.0.5", None),
         ("fe80::1", None),
+        ("224.0.0.1", None),
+        ("0.0.0.0", None),
         ("not-an-ip", None),
     ],
 )

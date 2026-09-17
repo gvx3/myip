@@ -29,14 +29,6 @@
         max-width: 533px;
     }
 
-    .ip-row {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        justify-content: center;
-        flex-wrap: wrap;
-    }
-
     .ip {
         background: #5280c4;
         border: 1px solid;
@@ -46,19 +38,6 @@
         word-break: break-all;
         max-width: 100%;
         overflow-x: auto;
-    }
-
-    button {
-        font-family: inherit;
-        font-size: 16px;
-        padding: 0.4em 0.9em;
-        border: 1px solid #333;
-        background: #fff;
-        color: #333;
-        cursor: pointer;
-    }
-    button:hover {
-        background: #f0f0f0;
     }
 
     table {
@@ -73,12 +52,6 @@
     th {
         font-weight: 700;
         white-space: nowrap;
-    }
-
-    footer {
-        margin-top: 2em;
-        font-size: 15px;
-        color: #555;
     }
 
     .github-link {
@@ -112,11 +85,7 @@
     <div class="center">
         <h1>What is my IP address ?</h1>
         <h3>Your Public IP: </h3>
-        <div class="ip-row">
-            <p class="ip" id="ip">{{ ip }}</p>
-            <button type="button" id="copy-btn" title="Copy IP address">Copy</button>
-            <button type="button" onclick="window.location.reload()" title="Look up again">Refresh</button>
-        </div>
+        <p class="ip" id="ip">{{ ip }}</p>
 
         <table>
             <tr><th>Region</th><td>{{ city }} {{ region_name }}</td></tr>
@@ -135,23 +104,5 @@
             <tr><th>User Agent</th><td>{{ user_agent }}</td></tr>
         </table>
     </div>
-
-    <footer class="center">
-        <p>Geolocation data by <a href="https://ip-api.com" target="_blank" rel="noopener">ip-api.com</a>.
-        Your IP and user agent are sent to that service to produce this page.</p>
-    </footer>
-
-    <script>
-        document.getElementById("copy-btn").addEventListener("click", async function () {
-            const ip = document.getElementById("ip").textContent.trim();
-            try {
-                await navigator.clipboard.writeText(ip);
-                this.textContent = "Copied!";
-            } catch (err) {
-                this.textContent = "Copy failed";
-            }
-            setTimeout(() => { this.textContent = "Copy"; }, 1500);
-        });
-    </script>
 </body>
 </html>
