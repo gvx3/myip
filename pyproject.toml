@@ -18,6 +18,13 @@ dev = [
     "ruff>=0.16.7",
 ]
 
+# Put the repo root on sys.path so `import src.ip` works no matter how pytest
+# is invoked. `python -m pytest` inserts the cwd automatically; the `pytest`
+# console script (what `uv run pytest` uses) does not, and pytest then only
+# adds tests/ to sys.path because tests/ has no __init__.py.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 # Explicit rule set so lint results do not drift when ruff's defaults change
 # (ruff 0.16 expanded its defaults to enable BLE001 and others).
 [tool.ruff]
