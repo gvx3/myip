@@ -17,15 +17,15 @@ echo "deploying $(git rev-parse --short HEAD) as $IMAGE"
 
 # Build before touching the running container so a bad build cannot take the
 # site down. Caddy reaches it on 127.0.0.1:$PORT, so publish on loopback only.
-docker build -t "$IMAGE" .
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-docker run -d --name "$CONTAINER" --restart unless-stopped \
+$DOCKER build -t "$IMAGE" .
+$DOCKER rm -f "$CONTAINER" >/dev/null 2>&1 || true
+$DOCKER run -d --name "$CONTAINER" --restart unless-stopped \
     -p "${PORT}:8500" "$IMAGE"
-docker image prune -f >/dev/null
+$DOCKER image prune -f >/dev/null
 
 # Wait for the image's HEALTHCHECK instead of guessing at a sleep.
 for _ in $(seq 1 15); do
-    if [ "$(docker inspect -f '{{.State.Health.Status}}' "$CONTAINER" 2>/dev/null)" = healthy ]; then
+    if [ "$($DOCKER inspect -f '{{.State.Health.Status}}' "$CONTAINER" 2>/dev/null)" = healthy ]; then
         echo "healthy: http://127.0.0.1:${PORT}/"
         exit 0
     fi
@@ -33,5 +33,5 @@ for _ in $(seq 1 15); do
 done
 
 echo "container '$CONTAINER' did not become healthy" >&2
-docker logs --tail 50 "$CONTAINER" >&2
+$DOCKER logs --tail 50 "$CONTAINER" >&2
 exit 1
